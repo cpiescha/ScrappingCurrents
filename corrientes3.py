@@ -3,6 +3,8 @@ from tkinter import ttk
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from tkinter import messagebox
+
 import time
 import requests
 import os
@@ -10,9 +12,20 @@ from dotenv import load_dotenv
 from datetime import datetime
 from openpyxl import Workbook, load_workbook
 import threading
-import pyautogui
+
 
 load_dotenv()
+
+def post_to_webhook(data, webhook_url="http://localhost:5000/webhook"):
+    """
+    Envía un JSON con los datos de sensores al webhook.
+    """
+    try:
+        resp = requests.post(webhook_url, json=data, timeout=5)
+        resp.raise_for_status()
+        print(f"[Webhook] Enviado: {data}")
+    except requests.RequestException as e:
+        print(f"[Webhook] Error enviando datos: {e}")
 
 def send_text(bot_message):  # Envía mensajes al chatbot de Telegram
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -20,6 +33,14 @@ def send_text(bot_message):  # Envía mensajes al chatbot de Telegram
     send_text_url = f'https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={chat_ID}&parse_mode=Markdown&text={bot_message}'
     res = requests.post(send_text_url)
     return res
+def send_image(image):                                            #funcion que envia imagenes al chatbot de telegram
+    bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_ID = os.getenv('TELEGRAM_CHAT_ID')
+    send_image='https://api.telegram.org/bot' + bot_token + '/sendPhoto'
+    data={'chat_id':chat_ID}
+    files={'photo':(image,open(image,'rb'))}
+    response=requests.post(send_image, files=files, data=data, verify=False)
+    return response
 
 class Scraping:
     def __init__(self):
@@ -27,13 +48,14 @@ class Scraping:
         self.running = False
         self.options = Options()
         # Si deseas ejecutar sin ventana, descomenta las siguientes líneas:
-        self.options.add_argument("headless")
+        # self.options.add_argument("headless")
         self.options.add_argument("disable-gpu")
         self.options.add_argument("no-sandbox")
         self.id = os.getenv('accountId')
         self.user = os.getenv('userId')
         self.password = os.getenv('password')
         self.driver = webdriver.Chrome(options=self.options)
+    
 
     def access(self, url):
         try:
@@ -46,10 +68,14 @@ class Scraping:
             return False
 
         try:
+
             id_cuenta = self.driver.find_element(by=By.ID, value='AccountId')
             user = self.driver.find_element(by=By.ID, value='UserId')
             password = self.driver.find_element(by=By.ID, value='Password')
             submit = self.driver.find_element(by=By.ID, value='submitBtn')
+
+
+        
 
             id_cuenta.send_keys(self.id)
             user.send_keys(self.user)
@@ -68,13 +94,15 @@ class Scraping:
         data = self.driver.find_elements(by=By.CLASS_NAME, value='value')
 
         # Verifica si se han encontrado suficientes datos
-        if not data or len(data) < 12:
-            raise ValueError("No se encontraron suficientes datos en la página")
+        if not data:
+            send_text("no se encontraron suficientes datos en la pagina")
+            raise ValueError("No se encontraron suficientes datos en la página") 
+            
             
         try:
-            corr1 = float(data[1].text or 0)
-            corr2 = float(data[6].text or 0)
-            corr3 = float(data[11].text or 0)
+            corr1 = float(data[0].text or 0)
+            corr2 = float(data[1].text or 0)
+            corr3 = float(data[2].text or 0)
         except Exception as e:
             print(f'Error al convertir datos: {e}')
             send_text(f'Error al convertir datos: {e}')
@@ -83,10 +111,14 @@ class Scraping:
         prom = (corr1 + corr2 + corr3) / 3
 
         try:
-            filename = 'corrientes.xlsx'
+            title = app.file_entry.get().upper()
+            file_name = title + '.xlsx'
+            if title=='':
+                messagebox.showerror('Error',"INGRESE EL NOMBRE DEL ARCHIVO")
+                app.stop_test()
 
-            if os.path.exists(filename):
-                book = load_workbook(filename)
+            if os.path.exists(file_name):
+                book = load_workbook(f'Q:\PUBLIC\CO_MDE_PRUEBAS_PR\CALENTAMIENTO CON PYTHON\CORRIENTES_CALENTAMIENTO\{file_name}')
                 sheet = book.active
                 row = sheet.max_row + 1
             else:
@@ -106,21 +138,24 @@ class Scraping:
             sheet[f'D{row}'] = corr2
             sheet[f'E{row}'] = corr3
             sheet[f'F{row}'] = round(prom, 2)
-            book.save(filename)
+            book.save(f'Q:\PUBLIC\CO_MDE_PRUEBAS_PR\CALENTAMIENTO CON PYTHON\CORRIENTES_CALENTAMIENTO/{file_name}')
+            row += 1
 
             print(f'FECHA: {fecha}\nHORA: {hora}\nFase U: {corr1} A')
             print(f'FECHA: {fecha}\nHORA: {hora}\nFase V: {corr2} A')
             print(f'FECHA: {fecha}\nHORA: {hora}\nFase W: {corr3} A')
             print(f'El promedio de las corrientes es: {round(prom, 2)} A')
 
-            send_text(f'FECHA: {fecha} \nHORA: {hora} \nFase U: {corr1} A \nFase V: {corr2} A \nFase W: {corr3} A \nPromedio: {round(prom, 2)}')
+            send_text(f'FECHA: {fecha} \nHORA: {hora} \nFase U: {corr1} A \nFase V: {corr2} A \nFase W: {corr3} A \nPromedio: {round(prom, 2)}A')
             
             return {"fecha": fecha, "hora": hora, "corr1": corr1, "corr2": corr2, "corr3": corr3, "prom": round(prom, 2)}
         except Exception as e:
             print(f'Error al guardar datos: {e}')
             send_text(f'Error al guardar datos, se ha desconectado la plataforma: {e}')
             return None
-
+    def save_screenshot(self):
+        self.driver.save_screenshot('Q:\PUBLIC\CO_MDE_PRUEBAS_PR\CALENTAMIENTO CON PYTHON\IMAGENES_CALENTAMIENTO/captura_corrientes.png')
+        send_image('Q:\PUBLIC\CO_MDE_PRUEBAS_PR\CALENTAMIENTO CON PYTHON\IMAGENES_CALENTAMIENTO/captura_corrientes.png')
 class CurrentTestApp:
     def __init__(self, root):
         self.root = root
@@ -132,16 +167,24 @@ class CurrentTestApp:
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
         self.title_label = tk.Label(self.top_frame, text="Pruebas de Corriente", font=("Arial", 16))
         self.title_label.pack(pady=10)
-
+        self.frame2 = tk.Frame(self.root)
+        
         # Frame izquierdo (Botones)
         self.left_frame = tk.Frame(self.root, width=150)
         self.left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+        self.frame2.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=50, pady=10)
 
         self.start_button = tk.Button(self.left_frame, text="Iniciar", command=self.start_test)
         self.start_button.pack(pady=5)
 
         self.stop_button = tk.Button(self.left_frame, text="Detener", command=self.stop_test)
         self.stop_button.pack(pady=5)
+
+        self.file_label = tk.Label(self.frame2, text="Ingrese el nombre del archivo:", font=("Arial", 14))
+        self.file_label.pack(anchor='w', padx=10, pady=(10, 0))
+
+        self.file_entry = tk.Entry(self.frame2, width=35)
+        self.file_entry.pack(anchor='w', padx=10, pady=(0, 10))
 
         # Frame derecho (Treeview para mostrar información)
         self.right_frame = tk.Frame(self.root)
@@ -170,29 +213,41 @@ class CurrentTestApp:
         self.scraping.driver.quit()
 
     def run_scraping(self):
-        date1 = datetime.now()
-        fecha1 = date1.date()
-        hora1 = date1.strftime('%H:%M')
-        url = 'https://cloud.gennect.net/app/Monitor/?culture=es'
-        if not self.scraping.access(url):
-            return
-        data = self.scraping.get_data(fecha1, hora1)
-        print(data)
-        if data:
-            self.update_treeview(data)
-        while self.scraping.running:
-            date = datetime.now()
-            fecha = date.date()
-            hora = date.strftime('%H:%M')
-            minute=date.minute
-            second=date.second
-            if ((minute == 0 or minute ==30) and second == 0):
-                data = self.scraping.get_data(fecha, hora)
-                if data:
-                    self.update_treeview(data)
-                else:
-                    print("no hay data")
-                    send_text("no hay data")
+        try:
+            date1 = datetime.now()
+            fecha1 = date1.date()
+            hora1 = date1.strftime('%H:%M')
+            url2 = 'https://cloud.gennect.net/app/Dashboard/?culture=es'
+            if not self.scraping.access(url2):
+                return
+            time.sleep(10)
+            data = self.scraping.get_data(fecha1, hora1)
+            if data:
+                self.update_treeview(data)
+                #post_to_webhook(data)
+            self.scraping.save_screenshot()
+            while self.scraping.running:
+                date = datetime.now()
+                fecha = date.date()
+                hora = date.strftime('%H:%M')
+                minute = date.minute
+                second = date.second
+                if minute in [0, 10, 20, 30, 40, 50] and second == 0:
+                    data = self.scraping.get_data(fecha, hora)
+                    if data:
+                        self.update_treeview(data)
+                    else:
+                        print("No hay data")
+                        send_text("No hay data")
+                    self.scraping.save_screenshot()
+                time.sleep(1)  # Pequeña pausa para evitar bucle muy acelerado
+        except Exception as e:
+            print(f'Error durante el scraping: {e}')
+            send_text(f'Error durante el scraping: {e}')
+        finally:
+            self.scraping.driver.quit()  # Aseguramos que se libere la sesión
+
+                
         
 
     def update_treeview(self, data):
